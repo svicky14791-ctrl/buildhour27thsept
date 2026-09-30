@@ -1,18 +1,23 @@
-# Render Blueprint. Lets the whole thing be deployed from the dashboard by
-# pointing Render at this repo, with no manual field entry beyond the API key.
+# Render Blueprint. Point Render at this repo and the only field you must fill
+# in is the API key, which Render prompts for because GROQ_API_KEY is sync: false.
 #
-# Before the first deploy:
-#   1. git init, commit, and push to GitHub (this repo is not a git repo yet).
-#   2. Set GROQ_API_KEY on the service. It is `sync: false` below, which tells
-#      Render to prompt for it and keep it out of the repo.
+# The index is built during the deploy, not committed:
+#   data/docs/ is tracked, so `python src/embed.py` chunks those pages, embeds
+#   them and writes data/chroma/ on the build instance. data/chroma/ is
+#   deliberately untracked (.gitignore) - the SQLite and HNSW binaries change
+#   byte-for-byte whenever the collection is opened, so tracking them produced
+#   churn on every run and pushed ~2 MB of regenerable artifacts into history.
 #
-# Why no ingestion step in buildCommand:
-#   data/chroma/ and data/docs/ are committed (see .gitignore), so a deploy
-#   boots with a working index and no network access. The trade-off is that the
-#   deployed app answers as of the committed corpus date and says so in its
-#   footer. To refresh, re-run the pipeline locally and redeploy - the commands
-#   are in README.md. Fetching groww.in at build time is the alternative, but it
-#   makes the build depend on a third party and can fail on rate limits.
+# Consequences worth knowing:
+#   - A cold start pays ~25 s to load the embedding model, then it stays cached.
+#   - The deployed app answers as of the fetched_at date in the tracked
+#     data/docs/*.meta.json sidecars, and states that date in every footer.
+#   - To refresh the corpus, re-run load.py / chunk.py / embed.py locally and
+#     commit the updated data/docs/ sidecars. See README.md.
+#
+# Note: `python src/embed.py` is the module that owns build_index(). There is no
+# src/ingest/run.py, and none is needed - chunking happens inside build_index()
+# from the tracked pages, so no separate chunk.py call or network fetch is needed.
 
 services:
   - type: web
@@ -20,7 +25,9 @@ services:
     runtime: python
     plan: free
     region: singapore
-    buildCommand: pip install --no-cache-dir -r requirements.txt
+    buildCommand: >-
+      pip install --no-cache-dir -r requirements.txt
+      && python src/embed.py
     startCommand: >-
       streamlit run src/app.py
       --server.port $PORT
