@@ -28,15 +28,14 @@ from src.chain import ask  # noqa: E402
 from src.guardrails import split_answer_footer  # noqa: E402
 from src.ingest.load import SOURCES  # noqa: E402
 
-APP_TITLE = "MF Facts – RAG FAQ Assistant"
+APP_TITLE = "HDFC BOT"
 AMC = "HDFC Asset Management"
 # Pinned verbatim by the Phase 7 spec, so it must not be reworded or extended.
 STANDING_NOTE = "Facts only. No investment advice."
 WELCOME = (
-    f"Ask me facts about {len(SOURCES)} {AMC} schemes - expense ratio, exit load, "
-    "minimum SIP, lock-in, benchmark, AUM, NAV, stamp duty and fund manager. I "
-    "answer from public Groww scheme pages and cite one link. I never give advice "
-    "and never state returns."
+    f"Ask me facts about {len(SOURCES)} HDFC schemes - expense ratio, exit load, "
+    "lock-in, AUM, NAV, stamp duty and fund manager. I answer from public Groww "
+    "pages with one link, and never give advice or state returns."
 )
 EXAMPLE_QUESTIONS = [
     "What is the expense ratio of the HDFC Large Cap Fund?",

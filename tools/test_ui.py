@@ -75,7 +75,7 @@ def text_of(message) -> str:
 # --- 1. initial render -------------------------------------------------------
 at = run()
 no_exceptions(at, "initial render")
-check("title", [t.value for t in at.title], ["MF Facts – RAG FAQ Assistant"])
+check("title", [t.value for t in at.title], ["HDFC BOT"])
 check("3 example buttons", len(at.button), 3)
 check_that(
     "chat input present", len(at.chat_input) == 1, f"got {len(at.chat_input)}"
