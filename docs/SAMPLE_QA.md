@@ -16,7 +16,7 @@ Last updated from sources: 2026-09-27
 ### Q: What is the base expense ratio of the HDFC Large Cap Fund?
 
 ```
-The base expense ratio of HDFC Large Cap Fund – Direct Growth is **0.84**.
+The base expense ratio of the HDFC Large Cap Fund – Direct Growth is **0.84**.
 
 Source: https://groww.in/mutual-funds/hdfc-large-cap-fund-direct-growth
 Last updated from sources: 2026-09-27
@@ -43,7 +43,7 @@ Last updated from sources: 2026-09-27
 ### Q: What is the minimum lumpsum for the HDFC ELSS Tax Saver Fund?
 
 ```
-The minimum lumpsum for the HDFC ELSS Tax Saver Fund – Direct Plan – Growth is ₹500.00.
+The minimum lumpsum for the HDFC ELSS Tax Saver Fund – Direct Plan – Growth is **₹500.00**.
 
 Source: https://groww.in/mutual-funds/hdfc-elss-tax-saver-fund-direct-plan-growth
 Last updated from sources: 2026-09-27
@@ -61,7 +61,7 @@ Last updated from sources: 2026-09-27
 ### Q: Does the HDFC Large Cap Fund have a lock-in period?
 
 ```
-The HDFC Large Cap Fund – Direct Growth has a lock‑in period of **None**.
+The HDFC Large Cap Fund – Direct Growth has no lock‑in period. The scheme facts list the lock‑in period as **None**.
 
 Source: https://groww.in/mutual-funds/hdfc-large-cap-fund-direct-growth
 Last updated from sources: 2026-09-27
