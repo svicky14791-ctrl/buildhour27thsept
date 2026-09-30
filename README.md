@@ -85,9 +85,21 @@ the pipeline locally and redeploy:
 git add data/chroma data/docs && git commit -m "Refresh corpus"
 ```
 
-The first build takes roughly 3-5 minutes, almost all of it installing torch.
-A cold start then takes about 25 s to load the embedding model, after which it
-stays cached in the instance.
+Embeddings run through `fastembed` on ONNX Runtime rather than torch, so there
+is no multi-gigabyte wheel to install. A cold build is minutes, and a cold start
+pays roughly 5 s to load the model, after which it stays cached in the instance.
+
+Set `RAG_PERF=1` to get per-stage timings in the logs:
+
+```
+[perf] embed 1 text(s): 25 ms
+[perf] retrieve: total: 103 ms
+[perf] groq: groq/openai/gpt-oss-120b: 1192 ms
+```
+
+If the free tier's ephemeral disk drops `data/chroma/`, the app rebuilds it from
+the tracked `data/docs/` pages on first use rather than failing every question
+with a `no_context` refusal.
 
 ## What it does
 

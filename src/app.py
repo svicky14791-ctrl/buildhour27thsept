@@ -57,9 +57,52 @@ st.set_page_config(page_title=APP_TITLE, layout="centered")
 
 @st.cache_resource(show_spinner=False)
 def index_size() -> int:
+    """Chunk count for the sidebar.
+
+    Cached because Streamlit re-runs this script on every keystroke in the chat
+    input, and an uncached count() opened a fresh Chroma client each time.
+    """
     from src.embed import count
 
     return count()
+
+
+@st.cache_resource(show_spinner=False)
+def warm_index() -> int:
+    """Make sure the index exists, building it once per process if it does not.
+
+    Render's free tier has an ephemeral disk, so a restart or a fresh deploy can
+    arrive with no data/chroma. Rebuilding from the tracked data/docs/ pages is
+    cheap now that the embedder is ONNX (~5 s, no torch), which is far better
+    than every question failing with a no_context refusal.
+    """
+    from src.embed import count
+
+    existing = count()
+    if existing:
+        return existing
+    print("No index found - building from data/docs ...")
+    return _build()
+
+
+@st.cache_resource(show_spinner=False)
+def _build() -> int:
+    from src.embed import build_index
+
+    return build_index()
+
+
+@st.cache_data(show_spinner=False)
+def ask_cached(question: str):
+    """Run the chain once per distinct question.
+
+    Streamlit re-runs the whole script on every interaction. Without this, a
+    rerun triggered by something unrelated - resizing the window, focusing the
+    chat input - would re-run retrieval and re-bill the LLM for the same
+    question. The cache is keyed on the question text and dropped when the
+    session's transcript is cleared.
+    """
+    return ask(question)
 
 
 def sidebar() -> None:
@@ -71,7 +114,7 @@ def sidebar() -> None:
             st.markdown(f"[{source.category}]({source.url})")
         st.divider()
         st.subheader("Index")
-        st.write(f"{index_size()} chunks embedded")
+        st.write(f"{warm_index()} chunks embedded")
         st.caption("all-MiniLM-L6-v2, ChromaDB")
         st.divider()
         st.subheader("Disclaimer")
@@ -142,10 +185,15 @@ def respond(question: str) -> None:
     question = (question or "").strip()
     if not question:
         return
+    # A button fires on every rerun while it stays True, so guard on the
+    # question we have not answered yet rather than trusting the click.
+    if question == st.session_state.get("last_answered"):
+        return
+    st.session_state.last_answered = question
 
     st.session_state.messages.append({"role": "user", "content": question})
     with st.spinner("Thinking..."):
-        result = ask(question)
+        result = ask_cached(question)
     st.session_state.messages.append(
         {
             "role": "assistant",

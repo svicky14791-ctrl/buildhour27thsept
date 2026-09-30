@@ -9,13 +9,16 @@ second run cannot leave stale vectors behind next to fresh ones.
 
 from __future__ import annotations
 
+import os
 import sys
+import time
 from collections import Counter
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
 import chromadb
+import numpy as np
 from chromadb.config import Settings as ChromaSettings
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +34,26 @@ EMBEDDING_DIM = 384
 BATCH_SIZE = 64
 WRITE_BATCH = 500
 
+# Per-stage timings, off by default. Enabled with GENERATOR_VERBOSE=1, which is
+# how you find out whether a slow answer is retrieval or the LLM.
+EMBED_PERF = os.getenv("RAG_PERF", "").strip() not in ("", "0", "false", "False")
+
+
+def perf(label: str):
+    """Context manager that prints how long a stage took, under RAG_PERF=1."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _cm():
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            if EMBED_PERF:
+                print(f"  [perf] {label}: {(time.perf_counter() - started) * 1000:.0f} ms")
+
+    return _cm()
+
 # Required metadata, plus section/kind so retrieval can filter and the UI can
 # show which passage answered a question.
 METADATA_FIELDS = ("scheme_name", "source_url", "ingest_date", "section", "kind")
@@ -38,24 +61,30 @@ METADATA_FIELDS = ("scheme_name", "source_url", "ingest_date", "section", "kind"
 
 @lru_cache(maxsize=1)
 def get_model():
-    """Load the embedding model once per process."""
-    from sentence_transformers import SentenceTransformer
+    """Load the embedding model once per process.
 
-    print(f"Loading embedding model: {EMBEDDING_MODEL}")
-    return SentenceTransformer(EMBEDDING_MODEL, device="cpu")
+    fastembed runs the same all-MiniLM-L6-v2 weights through ONNX Runtime, so
+    the vectors are the same model the brief specifies - same name, same 384
+    dims, same normalized output - without a ~2 GB torch dependency. That
+    matters on Render's free tier, where the disk is small and a cold build
+    spends minutes on the torch wheel.
+    """
+    from fastembed import TextEmbedding
+
+    print(f"Loading embedding model: {EMBEDDING_MODEL} (fastembed/ONNX)")
+    return TextEmbedding(EMBEDDING_MODEL)
 
 
 def embed_texts(texts: list[str]):
     """Encode a batch of chunk texts. Returns an (n, 384) float32 array."""
     if not texts:
         return []
-    vectors = get_model().encode(
-        texts,
-        batch_size=BATCH_SIZE,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
+    # fastembed yields one vector per input, already L2-normalised on q8/ONNX
+    # int8 paths, but norm=True makes that explicit rather than assumed.
+    with perf(f"embed {len(texts)} text(s)"):
+        vectors = np.array(
+            list(get_model().embed(texts, batch_size=BATCH_SIZE)), dtype=np.float32
+        )
     return vectors
 
 

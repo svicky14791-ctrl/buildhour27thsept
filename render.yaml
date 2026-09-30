@@ -9,7 +9,12 @@
 #   churn on every run and pushed ~2 MB of regenerable artifacts into history.
 #
 # Consequences worth knowing:
-#   - A cold start pays ~25 s to load the embedding model, then it stays cached.
+#   - Embeddings run through fastembed/ONNX, not torch, so there is no ~2 GB
+#     wheel to install. That is what makes the free tier viable on disk.
+#   - The free tier's disk is ephemeral, so data/chroma/ can vanish on restart
+#     or redeploy. src/app.py handles that: warm_index() rebuilds from the
+#     tracked data/docs/ pages on first use if the index is missing. The build
+#     step below avoids paying that cost on a healthy deploy.
 #   - The deployed app answers as of the fetched_at date in the tracked
 #     data/docs/*.meta.json sidecars, and states that date in every footer.
 #   - To refresh the corpus, re-run load.py / chunk.py / embed.py locally and

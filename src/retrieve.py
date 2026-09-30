@@ -28,7 +28,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.embed import embed_texts, get_client, get_collection  # noqa: E402
+from src.embed import (  # noqa: E402
+    embed_texts,
+    get_client,
+    get_collection,
+    perf,
+)
 
 TOP_K = 5
 MIN_SIMILARITY = 0.25
@@ -290,8 +295,15 @@ def _query(collection, vector: list[float], top_k: int, where: dict | None) -> l
 
 def retrieve(question: str, top_k: int = TOP_K) -> list[Retrieved]:
     """Return ranked chunks, scheme-filtered when the question names a scheme."""
-    vector = embed_texts([question or ""])[0].tolist()
-    collection = get_collection(get_client())
+    with perf("retrieve: total"):
+        return _retrieve_inner(question, top_k)
+
+
+def _retrieve_inner(question: str, top_k: int) -> list[Retrieved]:
+    with perf("retrieve: embed query"):
+        vector = embed_texts([question or ""])[0].tolist()
+    with perf("retrieve: chroma open"):
+        collection = get_collection(get_client())
     resolution = resolve_scheme(question)
 
     # A question that names an attribute has its answer in a specific chunk. That

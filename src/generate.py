@@ -34,6 +34,13 @@ MAX_TOKENS = 1024
 TEMPERATURE = 0.0
 LAST_UPDATED_PREFIX = "Last updated from sources:"
 
+
+def _finish_reason(response) -> str:
+    try:
+        return str(response["choices"][0].get("finish_reason") or "?")
+    except (KeyError, IndexError, TypeError):
+        return "?"
+
 SYSTEM_PROMPT = """You answer factual questions about 5 HDFC Mutual Fund schemes.
 
 Rules, in priority order:
@@ -287,6 +294,7 @@ class LiteLLMGenerator(Generator):
         self._model = model
         self._provider = provider
         self._fallback_used = False
+        self._empty_retry_used = False
 
     @property
     def model_id(self) -> str:
@@ -297,16 +305,19 @@ class LiteLLMGenerator(Generator):
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         from litellm import completion
 
+        from src.embed import perf
+
         try:
-            response = completion(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=TEMPERATURE,
-                max_tokens=MAX_TOKENS,
-            )
+            with perf(f"groq: {self._model}"):
+                response = completion(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=TEMPERATURE,
+                    max_tokens=MAX_TOKENS,
+                )
             content = (response["choices"][0]["message"]["content"] or "").strip()
         except Exception as exc:  # noqa: BLE001 - any backend failure must degrade
             if not self._fallback_used:
@@ -314,7 +325,34 @@ class LiteLLMGenerator(Generator):
                 print(f"  ! {self._model} unavailable ({type(exc).__name__}); using stub")
             return StubGenerator().generate(system_prompt, user_prompt)
         if not content:
-            return StubGenerator().generate(system_prompt, user_prompt)
+            # Usually finish_reason == "length": a reasoning model can spend the
+            # whole budget thinking and emit no answer, which used to look like
+            # a silent failure. Retrying once with headroom turns a blank into
+            # an answer, and only then degrades to the stub.
+            if not self._empty_retry_used:
+                self._empty_retry_used = True
+                print(
+                    f"  ! {self._model} returned empty content "
+                    f"(finish_reason={_finish_reason(response)}); retrying once"
+                )
+                try:
+                    with perf("groq: retry (empty content)"):
+                        response = completion(
+                            model=self._model,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            temperature=TEMPERATURE,
+                            max_tokens=MAX_TOKENS * 2,
+                        )
+                    content = (
+                        response["choices"][0]["message"]["content"] or ""
+                    ).strip()
+                except Exception:  # noqa: BLE001 - fall through to the stub
+                    content = ""
+            if not content:
+                return StubGenerator().generate(system_prompt, user_prompt)
         return content
 
 

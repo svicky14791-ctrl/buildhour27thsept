@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.embed import EMBEDDING_MODEL  # noqa: E402
 from src.generate import (  # noqa: E402
     SYSTEM_PROMPT,
     Generator,
@@ -159,7 +160,7 @@ def _respond(
         retrieved=retrieved or [],
         contract_problems=contract_problems or [],
         generator_model=generator.model_id,
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+        embedding_model=EMBEDDING_MODEL,
         latency_ms=int((time.perf_counter() - started) * 1000),
     )
 
@@ -241,7 +242,7 @@ def ask(question: str, top_k: int = 5) -> RAGResponse:
         retrieved=[c.as_log() for c in chunks],
         contract_problems=problems,
         generator_model=generator.model_id,
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+        embedding_model=EMBEDDING_MODEL,
         latency_ms=int((time.perf_counter() - started) * 1000),
     )
     _log(_log_entry(text, response, None, None))

@@ -1,15 +1,19 @@
 # MF Facts — RAG FAQ assistant for HDFC Mutual Fund schemes
 # Install:  pip install -r requirements.txt
-# Note:    sentence-transformers pulls in torch (~2 GB). Install before the demo,
-#          not during it.
 #
 # Deployment (Render): see render.yaml and the Deploy section of README.md.
 # These are all Linux wheels, so the same file works for local and remote.
-# The build is slow (~3-5 min) almost entirely because of torch.
+# No torch: embeddings go through ONNX Runtime via fastembed, so the install is
+# a few hundred MB and a cold build is minutes rather than tens of minutes.
 
 # --- RAG pipeline ---
 chromadb>=0.5.0              # stage 5: persistent vector store
-sentence-transformers>=3.0.0 # stage 4: all-MiniLM-L6-v2 embeddings (384-dim)
+# Embeddings. fastembed runs all-MiniLM-L6-v2 through ONNX Runtime instead of
+# torch: same model, same 384 dims, ~90 MB of weights instead of ~2 GB. That
+# difference is what makes a free-tier Render instance viable. If you need
+# torch for something else, sentence-transformers>=3.0.0 is the drop-in swap,
+# but src/embed.py must be changed back to SentenceTransformer.
+fastembed>=0.8.0
 
 # --- Ingestion (stages 1-2) ---
 requests>=2.32.0             # fetch the source pages
