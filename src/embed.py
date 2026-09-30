@@ -28,19 +28,27 @@ if str(ROOT) not in sys.path:
 from src.ingest.chunk import Chunk, chunk_docs_dir  # noqa: E402
 
 CHROMA_DIR = ROOT / "data" / "chroma"
+MODEL_CACHE_DIR = ROOT / "data" / "models"
 COLLECTION_NAME = "hdfc_mf_facts"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
 BATCH_SIZE = 64
 WRITE_BATCH = 500
 
-# Per-stage timings, off by default. Enabled with GENERATOR_VERBOSE=1, which is
-# how you find out whether a slow answer is retrieval or the LLM.
-EMBED_PERF = os.getenv("RAG_PERF", "").strip() not in ("", "0", "false", "False")
+# ONNX Runtime defaults to one arena per hardware thread. Render's free tier
+# gives 0.5 CPU, so there is nothing to parallelise across, and the extra
+# per-thread buffers are pure resident memory. One thread also makes cold-start
+# latency predictable instead of dependent on the instance's core count.
+ONNX_THREADS = int(os.getenv("ONNX_THREADS", "1"))
+
+# Per-stage timings. On by default: there are only a handful of lines per
+# question, and on a free-tier instance "the app just hangs" is otherwise
+# impossible to diagnose. Set RAG_PERF=0 to silence them.
+EMBED_PERF = os.getenv("RAG_PERF", "1").strip().lower() not in ("", "0", "false", "no")
 
 
 def perf(label: str):
-    """Context manager that prints how long a stage took, under RAG_PERF=1."""
+    """Context manager that prints how long a stage took."""
     from contextlib import contextmanager
 
     @contextmanager
@@ -72,7 +80,10 @@ def get_model():
     from fastembed import TextEmbedding
 
     print(f"Loading embedding model: {EMBEDDING_MODEL} (fastembed/ONNX)")
-    return TextEmbedding(EMBEDDING_MODEL)
+    print(f"  cache_dir : {MODEL_CACHE_DIR}")
+    print(f"  threads   : {ONNX_THREADS}")
+    MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return TextEmbedding(EMBEDDING_MODEL, cache_dir=str(MODEL_CACHE_DIR), threads=ONNX_THREADS)
 
 
 def embed_texts(texts: list[str]):

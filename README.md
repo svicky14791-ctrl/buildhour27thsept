@@ -18,7 +18,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe src\embed.py          # -> data/chroma (166 vectors)
 
 .\.venv\Scripts\python.exe src\guardrails.py      # 53/53 self-tests
-.\.venv\Scripts\python.exe tools\test_ui.py       # 47/47 headless UI tests
+.\.venv\Scripts\python.exe tools\test_ui.py       # 51/51 headless UI tests
 .\.venv\Scripts\python.exe src\verify.py          # 22 cases -> data/eval_results.json
 
 .\.venv\Scripts\streamlit.exe run src\app.py      # the UI
@@ -52,54 +52,74 @@ The chain also runs standalone, with one printed example per behaviour:
 
 ## Deploy
 
-Render, via the Blueprint in `render.yaml`:
+Render, with these three settings. `render.yaml` holds them, but **Render only
+reads that file when the service is created via New → Blueprint.** A service
+created from the dashboard ignores it, so if you set the commands by hand keep
+them identical:
 
 | | |
 |---|---|
-| Build | `pip install --no-cache-dir -r requirements.txt` |
-| Start | `streamlit run src/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false` |
+| Build | `pip install -r requirements.txt && python src/embed.py` |
+| Start | `streamlit run src/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true` |
 | Health | `/_stcore/health` |
 
-Steps: push the repo to GitHub, create a Blueprint from it in the Render
-dashboard, and set `GROQ_API_KEY` when prompted (`sync: false` keeps it out of
-the repo). That key is the only secret the app needs on a remote instance.
+Environment variables: `GROQ_API_KEY` (the only secret), `GENERATOR_BACKEND=groq`,
+`GROQ_MODEL=groq/openai/gpt-oss-120b`, `PYTHONUNBUFFERED=1`, `RAG_PERF=1`.
+Setting `PYTHONUNBUFFERED` is not optional — without it the log lines below sit
+in a buffer and the instance looks silent while it works.
 
-Three things make this deployable without a build-time crawl:
+The index is **built, not committed.** `data/docs/` is tracked, so the build
+command chunks those pages and writes `data/chroma/`; `data/chroma/` is
+gitignored because it is SQLite and HNSW binaries that change byte-for-byte
+whenever the collection is opened. The free tier's disk is ephemeral, so
+`prewarm()` in `src/app.py` rebuilds from `data/docs/` on first use if the index
+is missing — the app cannot come up unable to answer.
 
-- `data/chroma/` and `data/docs/` are **committed**, not ignored. A deploy serves
-  from a fresh clone, so the index and the `*.meta.json` files that carry the
-  corpus date are what let it boot with a working index and no network.
-- `.streamlit/config.toml` sets `headless` and binds `0.0.0.0`; the port comes
-  from `$PORT` via the start command, not the config file.
-- Query logging degrades gracefully. `data/logs/` stays ignored and the
-  container filesystem is ephemeral, so logs are lost on restart by design.
+ONNX weights are cached in `data/models/` (gitignored) rather than the OS temp
+dir, so the build-time download is reused at runtime instead of being fetched
+again inside the first user request.
 
-The trade-off of shipping a committed index: **the deployed app answers as of
-the committed corpus date** and says so in every answer footer. To refresh, run
-the pipeline locally and redeploy:
+### Reading the startup log
+
+`prewarm()` runs once per process and logs each step, so a stall is attributable:
+
+```
+[startup] prewarm begin
+[startup]   index check: 166 chunk(s) in data/chroma
+[startup]   index reused (0.7s)
+[startup]   chroma open, collection.count()=166
+[startup]   ONNX model ready (3.3s)
+[startup]   importing litellm (~160 MB, lazily imported by generate())
+[startup] prewarm complete in 23.0s
+```
+
+Roughly 20 s of that is the `litellm` import, which is otherwise paid inside the
+first question and makes the app look hung. After pre-warm, a first question
+takes ~2 s and later ones ~1.2 s.
+
+Per-stage timings are on by default (`RAG_PERF=0` silences them):
+
+```
+[perf] embed 1 text(s): 15 ms
+[perf] retrieve: total: 63 ms
+[perf] groq: groq/openai/gpt-oss-120b: 1169 ms
+[llm] groq/openai/gpt-oss-120b returned 239 chars, finish_reason=stop
+```
+
+**Peak memory is ~405 MB against the free tier's 512 MB.** It fits, but not
+comfortably. `prewarm()` deliberately does not reduce the peak — it moves the
+allocation earlier, so the first question is fast at the same steady-state
+footprint. If an instance is ever OOM-killed, the fix is a larger plan, not a
+code change.
+
+To refresh the corpus, run the pipeline locally and redeploy:
 
 ```powershell
 .\.venv\Scripts\python.exe src\ingest\load.py     # refetch, re-stamps fetched_at
 .\.venv\Scripts\python.exe src\ingest\chunk.py
 .\.venv\Scripts\python.exe src\embed.py
-git add data/chroma data/docs && git commit -m "Refresh corpus"
+git add data/docs && git commit -m "Refresh corpus"
 ```
-
-Embeddings run through `fastembed` on ONNX Runtime rather than torch, so there
-is no multi-gigabyte wheel to install. A cold build is minutes, and a cold start
-pays roughly 5 s to load the model, after which it stays cached in the instance.
-
-Set `RAG_PERF=1` to get per-stage timings in the logs:
-
-```
-[perf] embed 1 text(s): 25 ms
-[perf] retrieve: total: 103 ms
-[perf] groq: groq/openai/gpt-oss-120b: 1192 ms
-```
-
-If the free tier's ephemeral disk drops `data/chroma/`, the app rebuilds it from
-the tracked `data/docs/` pages on first use rather than failing every question
-with a `no_context` refusal.
 
 ## What it does
 
@@ -154,10 +174,11 @@ Design detail: [architecture.md](architecture.md). Chunking detail:
 | Latency p50 / p95 / max | 30 ms / 173 ms / 238 ms | p95 < 8 s |
 | Index size | 166 chunks | — |
 
-The embedding model takes ~26 s to load once per process; `verify.py` warms it
-before timing, so per-query latency measures retrieval and generation only. p50
-is stable around 30 ms; p95 moves between runs because a couple of queries pay an
-extra embedding call, so treat the p95 as order-of-magnitude, not a tight bound.
+The ONNX model takes ~3 s to load once per process, and `prewarm()` does it at
+startup rather than on the first question. `verify.py` warms it before timing,
+so per-query latency measures retrieval and generation only. p50 is stable around
+30 ms; p95 moves between runs because a couple of queries pay an extra embedding
+call, so treat the p95 as order-of-magnitude, not a tight bound.
 
 **No API key is required.** With none set, `generate.py` uses an extractive stub
 that returns source sentences verbatim and cannot invent anything. This checkout is
@@ -291,7 +312,8 @@ fact chunks that carry no value.
 ```
 data/docs/        5 fetched pages + .meta.json sidecars      (committed)
 data/chunks.jsonl 166 chunks                                 (ignored, build-time)
-data/chroma/      persistent Chroma index                    (committed)
+data/chroma/      persistent Chroma index                    (ignored, built on Render)
+data/models/      ONNX weights for fastembed                 (ignored, downloaded)
 data/logs/        queries.jsonl, PII-redacted                (ignored, runtime)
 data/eval_results.json
 src/              ingest/ + the pipeline above

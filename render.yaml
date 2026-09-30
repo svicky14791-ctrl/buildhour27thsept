@@ -23,6 +23,11 @@
 # Note: `python src/embed.py` is the module that owns build_index(). There is no
 # src/ingest/run.py, and none is needed - chunking happens inside build_index()
 # from the tracked pages, so no separate chunk.py call or network fetch is needed.
+#
+# IMPORTANT: this file is only read when the service is created via
+# New -> Blueprint. A service created from the dashboard ignores this file
+# entirely and uses whatever Build/Start/Env you type into its settings, so keep
+# those in sync by hand. The env vars below are the ones the code reads.
 
 services:
   - type: web
@@ -31,14 +36,13 @@ services:
     plan: free
     region: singapore
     buildCommand: >-
-      pip install --no-cache-dir -r requirements.txt
+      pip install -r requirements.txt
       && python src/embed.py
     startCommand: >-
       streamlit run src/app.py
       --server.port $PORT
       --server.address 0.0.0.0
       --server.headless true
-      --browser.gatherUsageStats false
     healthCheckPath: /_stcore/health
     envVars:
       - key: PYTHONUNBUFFERED
@@ -51,3 +55,7 @@ services:
         value: groq/openai/gpt-oss-120b
       - key: GENERATOR_VERBOSE
         value: "0"
+      # Per-stage timings. On by default in src/embed.py; set explicitly so the
+      # behaviour is visible in this file rather than implied by code.
+      - key: RAG_PERF
+        value: "1"

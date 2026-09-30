@@ -17,6 +17,12 @@ data/*_dump.txt
 # time and the *.meta.json sidecars carry the corpus date shown in answer footers.
 data/chroma/
 
+# The ONNX weights fastembed downloads (86 MB of model.onnx). Kept inside the
+# project rather than the OS temp dir on purpose: the build command and the
+# runtime then share one copy, so a cold start does not re-download the model
+# before it can answer. Still ignored - it is a download, not source.
+data/models/
+
 # python
 __pycache__/
 *.py[cod]

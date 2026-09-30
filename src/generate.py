@@ -307,6 +307,7 @@ class LiteLLMGenerator(Generator):
 
         from src.embed import perf
 
+        print(f"  [llm] calling {self._model} (max_tokens={MAX_TOKENS})", flush=True)
         try:
             with perf(f"groq: {self._model}"):
                 response = completion(
@@ -319,6 +320,12 @@ class LiteLLMGenerator(Generator):
                     max_tokens=MAX_TOKENS,
                 )
             content = (response["choices"][0]["message"]["content"] or "").strip()
+            reason = _finish_reason(response)
+            print(
+                f"  [llm] {self._model} returned {len(content)} chars, "
+                f"finish_reason={reason}",
+                flush=True,
+            )
         except Exception as exc:  # noqa: BLE001 - any backend failure must degrade
             if not self._fallback_used:
                 self._fallback_used = True

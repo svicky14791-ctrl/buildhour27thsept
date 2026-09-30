@@ -13,7 +13,9 @@ st.cache_resource.
 
 from __future__ import annotations
 
+import os
 import sys
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -69,20 +71,8 @@ def index_size() -> int:
 
 @st.cache_resource(show_spinner=False)
 def warm_index() -> int:
-    """Make sure the index exists, building it once per process if it does not.
-
-    Render's free tier has an ephemeral disk, so a restart or a fresh deploy can
-    arrive with no data/chroma. Rebuilding from the tracked data/docs/ pages is
-    cheap now that the embedder is ONNX (~5 s, no torch), which is far better
-    than every question failing with a no_context refusal.
-    """
-    from src.embed import count
-
-    existing = count()
-    if existing:
-        return existing
-    print("No index found - building from data/docs ...")
-    return _build()
+    """Chunk count for the sidebar. The index itself is built by prewarm()."""
+    return prewarm()["chunks"]
 
 
 @st.cache_resource(show_spinner=False)
@@ -90,6 +80,79 @@ def _build() -> int:
     from src.embed import build_index
 
     return build_index()
+
+
+def _log(event: str) -> None:
+    """One line per startup step, so a stall is visible in Render's log.
+
+    Streamlit captures print() from the script run, which is why the sidebar
+    count already showed up. This adds the stages behind it: without these you
+    cannot tell a 40 s model download from a 40 s hung Chroma open.
+    """
+    print(f"[startup] {event}", flush=True)
+
+
+@st.cache_resource(show_spinner=False)
+def prewarm() -> dict:
+    """Pay every cold-start cost before the user's first question.
+
+    The ONNX session costs ~176 MB and the ONNX weights are an 86 MB download.
+    Doing that inside the first answer made the app look broken: the user typed
+    a question and watched "Thinking..." for a minute. Doing it here means the
+    page takes a few seconds longer to appear once per instance, and every
+    subsequent question is fast.
+
+    Each step logs before and after, so Render's log shows exactly which step
+    is responsible if this is what the health check is waiting on.
+    """
+    from src.embed import count, embed_texts, get_client, get_collection, get_model
+
+    t0 = time.perf_counter()
+    _log("prewarm begin")
+    _log(f"  python {sys.version.split()[0]}  pid {os.getpid()}  cwd {Path.cwd()}")
+
+    total = count()
+    _log(f"  index check: {total} chunk(s) in data/chroma")
+    if not total:
+        _log("  index missing - rebuilding from data/docs (this is the slow path)")
+        total = _build()
+        _log(f"  index rebuilt: {total} chunk(s) in {time.perf_counter() - t0:.1f}s")
+    else:
+        _log(f"  index reused ({time.perf_counter() - t0:.1f}s)")
+
+    _log("  opening chroma client")
+    collection = get_collection(get_client())
+    _log(f"  chroma open, collection.count()={collection.count()}")
+
+    _log("  loading ONNX model (first load on a cold instance downloads ~86 MB)")
+    get_model()
+    _log(f"  ONNX model ready ({time.perf_counter() - t0:.1f}s)")
+
+    _log("  running a warm-up inference")
+    embed_texts(["warm up"])
+    _log(f"  warm-up inference done ({time.perf_counter() - t0:.1f}s)")
+
+    # litellm is imported lazily inside generate(), which made the *first*
+    # question absorb a ~20 s / ~160 MB import. Do it here instead, and only
+    # when a real backend is selected - the stub needs none of it.
+    from src.generate import LiteLLMGenerator, get_generator
+
+    generator = get_generator()
+    if isinstance(generator, LiteLLMGenerator):
+        _log("  importing litellm (~160 MB, lazily imported by generate())")
+        import litellm  # noqa: F401
+
+        _log(f"  litellm {getattr(litellm, '__version__', '?')} imported")
+    _log(f"  generator: {generator.model_id}")
+
+    _log(f"prewarm complete in {time.perf_counter() - t0:.1f}s")
+    return {"chunks": total, "generator": generator.model_id}
+
+
+# Runs on every rerun, but the body runs once per process. Placed here rather
+# than inside sidebar() so the cost is paid and logged even if the sidebar is
+# not rendered.
+prewarm()
 
 
 @st.cache_data(show_spinner=False)
@@ -192,8 +255,15 @@ def respond(question: str) -> None:
     st.session_state.last_answered = question
 
     st.session_state.messages.append({"role": "user", "content": question})
+    _log(f"question received: {question[:70]!r}")
+    t0 = time.perf_counter()
     with st.spinner("Thinking..."):
         result = ask_cached(question)
+    _log(
+        f"question answered in {time.perf_counter() - t0:.1f}s "
+        f"(refused={result.refused}, hits={len(result.retrieved)}, "
+        f"model={result.generator_model})"
+    )
     st.session_state.messages.append(
         {
             "role": "assistant",
