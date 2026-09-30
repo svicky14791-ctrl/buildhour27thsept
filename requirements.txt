@@ -1,0 +1,31 @@
+# MF Facts — RAG FAQ assistant for HDFC Mutual Fund schemes
+# Install:  pip install -r requirements.txt
+# Note:    sentence-transformers pulls in torch (~2 GB). Install before the demo,
+#          not during it.
+#
+# Deployment (Render): see render.yaml and the Deploy section of README.md.
+# These are all Linux wheels, so the same file works for local and remote.
+# The build is slow (~3-5 min) almost entirely because of torch.
+
+# --- RAG pipeline ---
+chromadb>=0.5.0              # stage 5: persistent vector store
+sentence-transformers>=3.0.0 # stage 4: all-MiniLM-L6-v2 embeddings (384-dim)
+
+# --- Ingestion (stages 1-2) ---
+requests>=2.32.0             # fetch the source pages
+beautifulsoup4>=4.12.0       # HTML -> text
+lxml>=5.0.0                  # bs4 parser; the 450 KB pages are malformed
+                             # Next.js output, and html.parser is materially
+                             # worse on them
+
+# --- Generation (stage 9) ---
+# litellm covers OpenAI, Gemini and Ollama behind one API, so the swappable
+# backend in src/generate.py needs a single client.
+litellm>=1.40.0
+
+# --- App ---
+streamlit>=1.38.0            # UI
+python-dotenv>=1.0.0         # loads .env (API keys)
+
+# After the first successful install, freeze for a reproducible demo:
+#   pip freeze > requirements.lock.txt

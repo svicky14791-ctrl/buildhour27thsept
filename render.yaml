@@ -1,0 +1,41 @@
+# Render Blueprint. Lets the whole thing be deployed from the dashboard by
+# pointing Render at this repo, with no manual field entry beyond the API key.
+#
+# Before the first deploy:
+#   1. git init, commit, and push to GitHub (this repo is not a git repo yet).
+#   2. Set GROQ_API_KEY on the service. It is `sync: false` below, which tells
+#      Render to prompt for it and keep it out of the repo.
+#
+# Why no ingestion step in buildCommand:
+#   data/chroma/ and data/docs/ are committed (see .gitignore), so a deploy
+#   boots with a working index and no network access. The trade-off is that the
+#   deployed app answers as of the committed corpus date and says so in its
+#   footer. To refresh, re-run the pipeline locally and redeploy - the commands
+#   are in README.md. Fetching groww.in at build time is the alternative, but it
+#   makes the build depend on a third party and can fail on rate limits.
+
+services:
+  - type: web
+    name: mf-facts
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: >-
+      streamlit run src/app.py
+      --server.port $PORT
+      --server.address 0.0.0.0
+      --server.headless true
+      --browser.gatherUsageStats false
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: GENERATOR_BACKEND
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: groq/openai/gpt-oss-120b
+      - key: GENERATOR_VERBOSE
+        value: "0"

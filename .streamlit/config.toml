@@ -1,0 +1,21 @@
+# Streamlit server config.
+#
+# Port is deliberately NOT set here. Render injects $PORT per instance, and
+# the start command in render.yaml passes --server.port $PORT, which overrides
+# anything in this file. Hard-coding 8501 here would be silently ignored on
+# Render and break the health check.
+
+[server]
+headless = true          # no browser to open, and no "Welcome to Streamlit" gate
+address = "0.0.0.0"      # required: the container must listen externally
+enableCORS = false
+maxUploadSize = 5
+
+[browser]
+gatherUsageStats = false  # no outbound telemetry from a demo instance
+
+[runner]
+fastReruns = true
+
+[theme]
+base = "light"

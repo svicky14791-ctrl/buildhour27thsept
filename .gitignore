@@ -1,0 +1,31 @@
+# secrets
+.env
+
+# Ingestion intermediates only. These are regenerable with load.py and chunk.py,
+# and are never read at query time. Comments are kept on their own lines: a rule
+# carrying a trailing comment is legal but easy to misread, and this file is the
+# only thing standing between your Groq key and a public repo.
+data/raw/
+data/logs/
+data/chunks.jsonl
+data/*_dump.txt
+
+# data/chroma/ and data/docs/ are deliberately NOT ignored. A deploy serves from
+# a fresh clone, so the committed vector index and the *.meta.json files (which
+# carry the corpus date shown in the answer footer) are what let the app boot
+# with a working index and no network access at build time. ~2 MB total.
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
