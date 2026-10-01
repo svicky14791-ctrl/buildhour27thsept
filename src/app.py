@@ -31,7 +31,18 @@ from src.ingest.load import SOURCES  # noqa: E402
 APP_TITLE = "HDFC BOT"
 AMC = "HDFC Asset Management"
 # Pinned verbatim by the Phase 7 spec, so it must not be reworded or extended.
+# It is persistent and not dismissible per the PRD, but it now renders as a quiet
+# caption beside the chat input rather than a full-width banner above the page -
+# a banner that size reads as the main content, and it pushed the examples and
+# the transcript below the fold on a phone.
 STANDING_NOTE = "Facts only. No investment advice."
+COLD_START_NOTE = (
+    "Waking up. First load downloads the embedding model and opens the vector "
+    "index, so this can take up to 30 seconds."
+)
+# Below this, prewarm() hit a warm cache and the note would only flash, which
+# reads as a glitch rather than as progress.
+COLD_START_FLASH_LIMIT = 1.0
 WELCOME = (
     f"Ask me facts about {len(SOURCES)} HDFC schemes - expense ratio, exit load, "
     "lock-in, AUM, NAV, stamp duty and fund manager. I answer from public Groww "
@@ -54,6 +65,60 @@ DISCLAIMER = (
 )
 
 st.set_page_config(page_title=APP_TITLE, layout="centered")
+
+# st.button renders its label in a single line and clips it with an ellipsis when
+# it overflows. The example labels are whole questions, so at three columns each
+# one loses most of its text. This lets the label wrap and lets the button grow,
+# so the question reads in full instead of "What is the expense...".
+# Scoped to .stButton so nothing else in the app inherits the override.
+#
+# The media query is the mobile half of the layout: Streamlit collapses columns
+# to one below ~640px on its own, but it keeps the desktop page gutters and 16px
+# base font, which leaves a phone-width column with very little room per line.
+st.markdown(
+    """
+    <style>
+    .stButton > button p {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+    }
+    .stButton > button {
+        height: auto;
+        white-space: normal;
+        /* Long scheme names must wrap rather than force the page wider than
+           the viewport, which is what causes horizontal scroll on a phone. */
+        overflow-wrap: anywhere;
+    }
+    @media (max-width: 640px) {
+        .block-container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+        .block-container p,
+        .block-container li {
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+        h1 {
+            font-size: 1.75rem;
+        }
+        /* Buttons are the primary tap target on a phone, so give them room
+           rather than the 38px default. */
+        .stButton > button {
+            padding-top: 0.6rem;
+            padding-bottom: 0.6rem;
+        }
+        /* The chat input is pinned to the bottom; without this its placeholder
+           is truncated to a few characters on a narrow screen. */
+        [data-testid="stChatInput"] textarea {
+            font-size: 1rem;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 @st.cache_resource(show_spinner=False)
@@ -151,7 +216,21 @@ def prewarm() -> dict:
 # Runs on every rerun, but the body runs once per process. Placed here rather
 # than inside sidebar() so the cost is paid and logged even if the sidebar is
 # not rendered.
+#
+# The placeholder is the cold-start affordance. A cached instance returns in
+# well under COLD_START_FLASH_LIMIT and the note is swapped back out, so the
+# steady state is a plain page. A cold instance holds the note on screen for the
+# ~30 s while the model downloads, instead of showing a blank page that reads as
+# a crash. The spinner does the same job for the wait but disappears the moment
+# the script yields, which on a cold start is before the download finishes.
+_cold_start = st.empty()
+_cold_start.info(COLD_START_NOTE)
+_cold_t0 = time.perf_counter()
 prewarm()
+if time.perf_counter() - _cold_t0 >= COLD_START_FLASH_LIMIT:
+    _cold_start.success("Ready. Ask a question below.")
+else:
+    _cold_start.empty()
 
 
 @st.cache_data(show_spinner=False)
@@ -171,9 +250,13 @@ def sidebar() -> None:
     with st.sidebar:
         st.subheader(AMC)
         st.caption(f"{len(SOURCES)} schemes in this corpus")
+        # One entry per scheme, name as the link and the category as a quiet
+        # second line. These were two separate st.markdown calls each, which
+        # rendered as a name with an unlabelled category link under it: two rows
+        # per scheme, and neither row said what the link was.
         for source in SOURCES:
-            st.markdown(f"**{source.scheme_name}**")
-            st.markdown(f"[{source.category}]({source.url})")
+            st.markdown(f"[{source.scheme_name}]({source.url})")
+            st.caption(source.category)
         st.divider()
         st.subheader("Index")
         st.write(f"{warm_index()} chunks embedded")
@@ -208,21 +291,23 @@ def render_assistant(message: dict) -> None:
     if is_refusal:
         st.warning(body or message.get("fallback_note") or "I don't have that in my sources.")
     else:
-        st.markdown(body)
-        if schemes:
-            # One quiet line, not a list. The full evidence is below on demand.
-            label = schemes[0] if len(schemes) == 1 else f"{schemes[0]} +{len(schemes) - 1} more"
-            st.caption(f"From: {label}")
-            st.markdown(f"[Source]({message['source_url']})")
-            st.caption(f"Last updated from sources: {message['last_updated']}")
+        with st.container(border=True):
+            st.markdown(body)
+            if schemes:
+                # One quiet line, not a list. The full evidence is below on demand.
+                label = schemes[0] if len(schemes) == 1 else f"{schemes[0]} +{len(schemes) - 1} more"
+                st.caption(f"From: {label}")
+                st.markdown(f"[Source]({message['source_url']})")
+                st.caption(f"Last updated from sources: {message['last_updated']}")
     if is_refusal and message.get("source_url"):
         # Every turn still needs a working link, but a refusal came from a rule
         # rather than a page, so calling this "Source" would imply otherwise.
         # Link the scheme name so the label is the thing you click.
-        st.caption(
-            "Reference only, not the basis for this reply: "
-            f"[{schemes[0] if retrieved else 'the 5 HDFC schemes'}]({message['source_url']})"
-        )
+        with st.container(border=True):
+            st.caption(
+                "Reference only, not the basis for this reply: "
+                f"[{schemes[0] if retrieved else 'the 5 HDFC schemes'}]({message['source_url']})"
+            )
 
     if retrieved:
         with st.expander(f"RAG evidence ({len(retrieved)} passages)"):
@@ -256,7 +341,7 @@ def respond(question: str) -> None:
     st.session_state.messages.append({"role": "user", "content": question})
     _log(f"question received: {question[:70]!r}")
     t0 = time.perf_counter()
-    with st.spinner("Thinking..."):
+    with st.spinner("Looking up facts..."):
         result = ask_cached(question)
     _log(
         f"question answered in {time.perf_counter() - t0:.1f}s "
@@ -282,13 +367,15 @@ sidebar()
 
 st.title(APP_TITLE)
 st.write(WELCOME)
-st.info(STANDING_NOTE)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 for column, example in zip(st.columns(len(EXAMPLE_QUESTIONS)), EXAMPLE_QUESTIONS):
     # width="stretch" replaces use_container_width, deprecated in Streamlit 1.49+.
+    # The label is a full question, so the button must wrap rather than
+    # ellipsise - the <style> block above does that. Columns also collapse to a
+    # single column on narrow viewports, which is the mobile case.
     if column.button(example, key=f"example-{example[:24]}", width="stretch"):
         respond(example)
 
@@ -300,6 +387,13 @@ if st.session_state.messages:
                 st.markdown(message["content"])
             else:
                 render_assistant(message)
+
+# st.chat_input is pinned to the bottom of the viewport, so there is no reliable
+# way to place an element after it. This caption sits immediately above it, which
+# keeps the standing note next to the input it qualifies - the PRD requires it to
+# be persistent and not dismissible, and this is the one place on the page where
+# it stays on screen while the user types.
+st.caption(STANDING_NOTE)
 
 prompt = st.chat_input("Ask a factual question about one of the 5 HDFC schemes")
 if prompt:

@@ -22,6 +22,7 @@ Exit code is non-zero on any failure, so this can gate a build.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -38,6 +39,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
+
+from src.ingest.load import SOURCES  # noqa: E402
 
 APP = str(ROOT / "src" / "app.py")
 TIMEOUT = 240
@@ -72,6 +75,21 @@ def text_of(message) -> str:
     return "\n".join(parts)
 
 
+def scheme_links(block) -> set[str]:
+    """Markdown link values inside a block, whitespace-normalised.
+
+    Streamlit wraps long values in the element proto, so a scheme name arrives
+    split across lines and never matches its counterpart in SOURCES verbatim.
+    Collapsing runs of whitespace makes the comparison meaningful without
+    loosening it - the URL still has to be the exact allowlisted one.
+    """
+    return {
+        re.sub(r"\s+", " ", m.value).strip()
+        for m in block.markdown
+        if "groww.in" in m.value
+    }
+
+
 # --- 1. initial render -------------------------------------------------------
 at = run()
 no_exceptions(at, "initial render")
@@ -84,7 +102,7 @@ check_that(
     "no messages before first question", len(at.chat_message) == 0,
     f"got {len(at.chat_message)}",
 )
-check_that("sidebar lists 5 schemes", len(at.sidebar.markdown) >= 10, "")
+check_that("sidebar lists 5 schemes", len(scheme_links(at.sidebar)) == len(SOURCES), "")
 check_that(
     "index size rendered",
     any("chunks embedded" in c.value for c in at.sidebar.caption)
@@ -97,16 +115,48 @@ check_that(
     ) or "never give advice" in " ".join(p.value for p in at.markdown),
     "",
 )
-# Done gate: the standing note is pinned verbatim by the Phase 7 spec.
+# Done gate: the standing note is pinned verbatim by the Phase 7 spec. It renders
+# as a caption beside the chat input, not as the banner it used to be, so this
+# asserts the string and its absence from st.info rather than the element type.
 check(
     "standing note is the literal spec string",
-    [i.value for i in at.info],
+    [c.value for c in at.caption if c.value == "Facts only. No investment advice."],
     ["Facts only. No investment advice."],
 )
+check("no standing-note banner", len(at.info), 0)
 check_that(
     "full disclaimer in sidebar",
     any("not investment advice" in c.value for c in at.sidebar.caption),
     "",
+)
+# One clean entry per scheme: the name is the link, the category sits under it.
+# These were two rows each, with the category link unlabelled.
+links = scheme_links(at.sidebar)
+check("one link per scheme in sidebar", len(links), len(SOURCES))
+check_that(
+    "every scheme link carries its name and URL",
+    all(
+        f"[{source.scheme_name}]({source.url})" in links
+        for source in SOURCES
+    ),
+    "",
+)
+check_that(
+    "category shown under each scheme",
+    all(
+        source.category in "\n".join(c.value for c in at.sidebar.caption)
+        for source in SOURCES
+    ),
+    "",
+)
+check(
+    "no bare category links left in the sidebar",
+    [
+        value
+        for value in links
+        if any(source.category == re.sub(r"^\[(.*)\]\(.*\)$", r"\1", value) for source in SOURCES)
+    ],
+    [],
 )
 
 # --- 2. factual answer: rendered, attributed, cited -------------------------

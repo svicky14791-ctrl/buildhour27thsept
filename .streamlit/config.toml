@@ -19,3 +19,8 @@ fastReruns = true
 
 [theme]
 base = "light"
+primaryColor = "#0F3D56"        # Navy primary color
+backgroundColor = "#FFFFFF"      # White background
+secondaryBackgroundColor = "#F5F5F5"  # Light grey secondary background
+textColor = "#1F2937"
+font = "sans serif"
