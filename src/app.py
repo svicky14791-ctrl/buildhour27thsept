@@ -54,6 +54,59 @@ EMBED_MODEL = "all-MiniLM-L6-v2"
 VECTOR_STORE = "ChromaDB"
 EMBED_DIMS = "384-dim"
 
+# --- TEMPORARY deploy diagnostic --------------------------------------------
+# Marker for "is the live process running the code we think it is?". The string
+# is hand-set to the commit being deployed, so if the deployed page does not show
+# it, the process is not running this source. TEMPORARY - remove after the
+# deploy is confirmed.
+DEPLOY_DIAGNOSTIC = "0ecd69a"
+
+
+def _git_sha() -> str:
+    """Short SHA of the checkout, or a reason it could not be read.
+
+    Render may or may not ship a .git directory, so every failure mode returns a
+    readable string rather than raising - a diagnostic must never be the thing
+    that breaks the page.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()[:7]
+        return f"git-failed(rc={out.returncode}) {out.stderr.strip()[:60]}"
+    except FileNotFoundError:
+        return "git-not-installed"
+    except Exception as exc:  # noqa: BLE001 - diagnostic must not raise
+        return f"git-error({type(exc).__name__})"
+
+
+# Everything the live process should be able to tell us about itself, gathered
+# once at module scope so the values cannot change between the log line and the
+# on-page marker.
+DEPLOY_FACTS = {
+    "marker": DEPLOY_DIAGNOSTIC,
+    "git_sha": _git_sha(),
+    "app_file": str(Path(__file__).resolve()),
+    "cwd": os.getcwd(),
+    "python": sys.version.split()[0],
+    "streamlit": st.__version__,
+    "executable": sys.executable,
+    "app_mtime": time.strftime(
+        "%Y-%m-%d %H:%M:%S", time.localtime(Path(__file__).stat().st_mtime)
+    ),
+}
+# Render's log and the on-page marker must say the same thing, so format once.
+DEPLOY_FACTS_LINES = [f"{k}={v}" for k, v in DEPLOY_FACTS.items()]
+# --- end TEMPORARY deploy diagnostic -----------------------------------------
+
 WELCOME = (
     "Explore scheme details, fund information and key facts through a simple "
     "conversational experience."
@@ -453,6 +506,12 @@ def prewarm() -> dict:
 # ~30 s while the model downloads, instead of showing a blank page that reads as
 # a crash. The spinner does the same job for the wait but disappears the moment
 # the script yields, which on a cold start is before the download finishes.
+#
+# TEMPORARY deploy diagnostic: logged on every rerun, before prewarm(), so the
+# facts land in Render's log even if the script dies further down.
+for _fact in DEPLOY_FACTS_LINES:
+    _log(f"DEPLOY {_fact}")
+
 _cold_start = st.empty()
 _cold_start.info(COLD_START_NOTE)
 _cold_t0 = time.perf_counter()
@@ -542,6 +601,11 @@ def sidebar() -> None:
             f'<div class="sbsub">{escape(BRAND_SUBTITLE)}</div>',
             unsafe_allow_html=True,
         )
+        # TEMPORARY deploy diagnostic. Plain text on purpose - no CSS class, no
+        # theming - so it stays legible no matter which theme is active.
+        st.error(f"DEPLOY {DEPLOY_FACTS['marker']} | git {DEPLOY_FACTS['git_sha']}")
+        st.caption(" ".join(DEPLOY_FACTS_LINES))
+
         st.markdown(f'<div class="sbsection">Schemes</div>', unsafe_allow_html=True)
         # One entry per scheme: the name is the link, the category is a quiet
         # second line. Two rows per scheme, with an unlabelled category link,
@@ -693,6 +757,11 @@ def respond(question: str) -> None:
 sidebar()
 header()
 hero()
+
+# TEMPORARY deploy diagnostic, also in the main column: the sidebar collapses on
+# a phone and the main column is the one region guaranteed to be on screen.
+st.error(f"DEPLOY {DEPLOY_FACTS['marker']} | git {DEPLOY_FACTS['git_sha']}")
+st.caption(" ".join(DEPLOY_FACTS_LINES))
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
