@@ -126,8 +126,30 @@ st.markdown(
         --ok: #10b981;
     }
 
-    html, body, .stApp, [class*="st-"], button, input, textarea {
+    /* Inter applies to normal text only. The old [class*="st-"] selector also
+       caught Streamlit's icon spans (their emotion class starts with "st-"),
+       overriding the ligature icon font and printing the raw glyph name
+       ("keyboard_arrow_right") beside the expander label. */
+    html, body, .stApp,
+    p, div,
+    span:not([data-testid*="Icon"]):not([class*="material"]):not([class*="Material"]),
+    label, button, input, textarea, select, option,
+    a, small, strong, em, li, summary, th, td,
+    h1, h2, h3, h4, h5, h6 {
         font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    }
+    /* Restore the ligature icon font everywhere Streamlit uses it: expander
+       chevrons, buttons with icons, and the sidebar collapse control. Every
+       DynamicIcon carries an "Icon" testid (stIconMaterial is the default),
+       so one selector covers all of them. */
+    [data-testid="stIconMaterial"] {
+        font-family: "Material Symbols Rounded" !important;
+    }
+    [data-testid*="Icon"],
+    span[class*="material"], span[class*="Material"], i[class*="material"],
+    .material-symbols-rounded, .material-symbols-outlined, .material-icons {
+        font-family: "Material Symbols Rounded", "Material Symbols Outlined",
+                     "Material Icons" !important;
     }
     .stApp { background: var(--canvas); }
     [data-testid="stHeader"] { background: transparent; box-shadow: none; }
