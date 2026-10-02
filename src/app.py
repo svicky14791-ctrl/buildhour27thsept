@@ -3,7 +3,13 @@
 This file is the presentation layer and nothing else. Everything below the
 CSS block that touches the retrieval pipeline - prewarm(), ask_cached(),
 respond(), and the session_state contract they maintain - is backend and is
-deliberately unchanged. The redesign is CSS, layout, and the render helpers.
+deliberately unchanged. The MoneyChat restyle is CSS, layout, and the render
+helpers only.
+
+The visual language follows design/stitch.html: navy #004c8f + red #ED1c24,
+Inter, rounded white cards and a soft-shadow header. Tailwind and inline JS
+from the mock cannot run in Streamlit, so the look is reproduced with native
+components plus a single custom-CSS block.
 
 One Streamlit rule shapes the whole file: the script re-runs top to bottom on
 every interaction, so ask() is only ever called from a button or chat_input
@@ -14,6 +20,7 @@ st.cache_resource.
 
 from __future__ import annotations
 
+import base64
 import os
 import sys
 import time
@@ -30,7 +37,10 @@ from src.chain import ask  # noqa: E402
 from src.guardrails import split_answer_footer  # noqa: E402
 from src.ingest.load import SOURCES  # noqa: E402
 
-APP_TITLE = "HDFC BOT"
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+LOGO_PATH = ASSETS_DIR / "logo.png"
+
+APP_TITLE = "MoneyChat"
 AMC = "HDFC Asset Management"
 # Pinned verbatim by the Phase 7 spec, so it must not be reworded or extended.
 # It is persistent and not dismissible per the PRD, but it renders as a quiet
@@ -46,13 +56,14 @@ COLD_START_NOTE = (
 # reads as a glitch rather than as progress.
 COLD_START_FLASH_LIMIT = 1.0
 
-# --- brand copy for the redesigned surface ----------------------------------
+# --- brand copy for the MoneyChat surface -----------------------------------
 BRAND_SUBTITLE = "Mutual Fund Knowledge Assistant"
 KB_STATUS_READY = "RAG connected"
 HERO_KICKER = "Facts, not forecasts"
-EMBED_MODEL = "all-MiniLM-L6-v2"
-VECTOR_STORE = "ChromaDB"
-EMBED_DIMS = "384-dim"
+BANNER_TEXT = (
+    "Answers are grounded strictly in the ingested HDFC Mutual Fund scheme "
+    "pages. No forecasts, no rankings and no investment advice."
+)
 
 WELCOME = (
     "Explore scheme details, fund information and key facts through a simple "
@@ -63,6 +74,9 @@ EXAMPLE_QUESTIONS = [
     "Who manages the HDFC ELSS Tax Saver Fund?",
     "What is the lock-in period for the ELSS tax saver fund?",
 ]
+# Short labels rendered as the little category tag on each suggested-question
+# card. They describe the question, not any fund fact, so nothing here is data.
+EXAMPLE_CATEGORIES = ["Expense & Fees", "Fund Manager", "ELSS & Lock-in"]
 DISCLAIMER = (
     "This assistant provides factual information about 5 HDFC Mutual Fund schemes "
     "sourced from public Groww pages. It is not investment advice, and it does not "
@@ -74,15 +88,19 @@ DISCLAIMER = (
     "hold any security."
 )
 
-st.set_page_config(page_title=APP_TITLE, layout="centered")
+st.set_page_config(
+    page_title=APP_TITLE,
+    page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else "\U0001f4b0",
+    layout="centered",
+)
 
 # ---------------------------------------------------------------------------
 # Design tokens and component styles.
 #
-# One block, injected once at the top of the run. Every colour the app draws
-# with is a token here rather than a hex literal in a render helper, so the
-# surface stays consistent and .streamlit/config.toml only has to set the same
-# handful of values for Streamlit's own widgets.
+# One block, injected once at the top of the run. The palette mirrors
+# design/stitch.html: navy #004c8f primary, red #ED1c24 accent, Inter type and
+# slate neutrals. Every colour the app draws with is a token here rather than a
+# hex literal in a render helper.
 #
 # The media queries at the bottom are the mobile half of the layout. Streamlit
 # collapses columns to one below ~640px on its own, but it keeps the desktop
@@ -92,38 +110,88 @@ st.set_page_config(page_title=APP_TITLE, layout="centered")
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
     :root {
-        --hdfc-navy: #0F3D56;
-        --hdfc-navy-soft: #1B5A7A;
-        --hdfc-red: #C41E3A;
-        --ink: #1F2937;
-        --ink-muted: #64748B;
-        --ink-faint: #94A3B8;
-        --surface: #FFFFFF;
-        --surface-sunken: #F5F5F5;
-        --line: #E2E8F0;
-        --ok: #0F9D58;
+        --navy: #004c8f;
+        --navy-dark: #002e6e;
+        --accent: #ED1c24;
+        --light-blue: #edf4fb;
+        --canvas: #f8fafc;
+        --ink: #0f172a;
+        --ink-muted: #64748b;
+        --ink-faint: #94a3b8;
+        --surface: #ffffff;
+        --line: #e2e8f0;
+        --ok: #10b981;
     }
+
+    html, body, .stApp, [class*="st-"], button, input, textarea {
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    }
+    .stApp { background: var(--canvas); }
+    [data-testid="stHeader"] { background: transparent; box-shadow: none; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--canvas); }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
     /* Page chrome --------------------------------------------------------- */
     .block-container {
-        padding-top: 2.2rem;
+        padding-top: 1.6rem;
         padding-bottom: 7rem;   /* clears the pinned chat input */
-        max-width: 60rem;
+        max-width: 62rem;
     }
 
     /* Header -------------------------------------------------------------- */
-    h1 {
-        color: var(--hdfc-navy);
-        font-size: 2.1rem;
-        font-weight: 700;
-        letter-spacing: -0.02em;
-        margin: 0 0 0.15rem 0;
+    .appheader {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 0.7rem 1rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+    }
+    .appheader-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        min-width: 0;
+    }
+    .brandlogo {
+        width: 46px;
+        height: 46px;
+        flex: 0 0 auto;
+        object-fit: contain;
+        border-radius: 10px;
+        background: var(--surface);
+    }
+    .logofallback {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--navy);
+        color: #ffffff;
+        font-weight: 800;
+        font-size: 1.3rem;
+    }
+    .brandname {
+        color: var(--navy);
+        font-size: 1.05rem;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        line-height: 1.1;
     }
     .brandsub {
         color: var(--ink-muted);
-        font-size: 0.95rem;
-        margin-bottom: 0.35rem;
+        font-size: 0.78rem;
+        font-weight: 500;
+        margin-top: 0.15rem;
     }
     .statuspill {
         display: inline-flex;
@@ -131,81 +199,173 @@ st.markdown(
         gap: 0.45rem;
         padding: 0.3rem 0.75rem;
         border-radius: 999px;
-        background: #EAF6EF;
-        border: 1px solid #C7E6D4;
-        color: #0B6B3D;
-        font-size: 0.8rem;
-        font-weight: 600;
+        background: #ecfdf5;
+        border: 1px solid #a7f3d0;
+        color: #047857;
+        font-size: 0.78rem;
+        font-weight: 700;
         white-space: nowrap;
     }
     .statuspill .dot {
-        width: 7px;
-        height: 7px;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
         background: var(--ok);
-        box-shadow: 0 0 0 3px rgba(15, 157, 88, 0.18);
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
     }
-    .statuswrap { text-align: right; padding-top: 0.9rem; }
 
     /* Hero ---------------------------------------------------------------- */
-    .herokicker {
-        color: var(--hdfc-red);
-        font-size: 0.72rem;
-        font-weight: 700;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        margin-bottom: 0.35rem;
+    .hero { text-align: center; margin: 0.25rem 0 1.2rem; }
+    .herologo {
+        width: 84px;
+        height: 84px;
+        object-fit: contain;
+        display: block;
+        margin: 0 auto 0.7rem;
     }
-    /* Section labels ------------------------------------------------------ */
-    .sectionlabel {
+    .herotitle {
+        color: var(--navy);
+        font-size: 2rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+    }
+    .herosub {
         color: var(--ink-muted);
-        font-size: 0.72rem;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin: 1.6rem 0 0.5rem 0;
+        font-size: 0.95rem;
+        font-weight: 500;
+        margin-top: 0.25rem;
+    }
+    .herointro {
+        color: var(--ink-muted);
+        font-size: 0.92rem;
+        margin: 0.55rem auto 0;
+        max-width: 34rem;
+        line-height: 1.55;
     }
 
-    /* Question cards ------------------------------------------------------
-       Real st.button elements, restyled. Buttons are the click target Streamlit
-       gives us for free, and replacing them with HTML would mean hand-rolling
-       click handling that the framework already does correctly. The overrides
-       undo the parts of the default button that make it read as a button:
-       fixed height, ellipsised label, centred text, grey fill. */
-    .stButton > button {
-        height: auto;
-        min-height: 0;
-        white-space: normal;
-        text-align: left;
-        padding: 0.85rem 1rem;
-        border: 1px solid var(--line);
-        border-left: 3px solid var(--hdfc-navy);
-        border-radius: 12px;
+    /* Compliance banner --------------------------------------------------- */
+    .factbanner {
+        position: relative;
+        display: flex;
+        gap: 0.8rem;
+        align-items: flex-start;
         background: var(--surface);
-        color: var(--ink);
-        box-shadow: 0 1px 2px rgba(15, 61, 86, 0.06);
-        transition: transform 0.12s ease, box-shadow 0.12s ease,
-                    border-color 0.12s ease;
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--accent);
+        border-radius: 14px;
+        padding: 0.9rem 1rem;
+        margin-bottom: 1.4rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
     }
-    .stButton > button:hover {
-        border-color: var(--hdfc-navy);
-        border-left-color: var(--hdfc-red);
-        box-shadow: 0 6px 18px rgba(15, 61, 86, 0.13);
+    .facticon {
+        flex: 0 0 auto;
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        background: #fef2f2;
+        color: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        font-size: 1rem;
+    }
+    .facttitle {
+        color: var(--accent);
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-bottom: 0.15rem;
+    }
+    .facttext {
+        color: var(--ink-muted);
+        font-size: 0.84rem;
+        line-height: 1.5;
+        margin: 0;
+    }
+
+    /* Section labels ------------------------------------------------------ */
+    .sectionlabel {
+        color: var(--ink-faint);
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin: 0.2rem 0 0.6rem 0;
+    }
+
+    /* Suggested-question cards -------------------------------------------
+       Real st.button elements, restyled. Buttons are the click target
+       Streamlit gives us for free; the category tag makes the surrounding
+       column read as a card, so the button itself is stripped back to plain
+       text inside it. .stColumn is the stable testid Streamlit emits for a
+       column, and :has() lets us card only the columns that hold a .qtag. */
+    .stColumn:has(.qtag) {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 0.85rem 0.9rem 0.7rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+        position: relative;
+        overflow: hidden;
+        transition: box-shadow 0.15s ease, border-color 0.15s ease,
+                    transform 0.15s ease;
+    }
+    .stColumn:has(.qtag)::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0.9rem;
+        bottom: 0.9rem;
+        width: 3px;
+        border-radius: 0 3px 3px 0;
+        background: var(--navy);
+    }
+    .stColumn:has(.qtag):hover {
+        border-color: rgba(0, 76, 143, 0.45);
+        box-shadow: 0 8px 20px rgba(0, 76, 143, 0.12);
         transform: translateY(-2px);
     }
-    .stButton > button:focus-visible {
-        outline: 2px solid var(--hdfc-navy-soft);
+    .stColumn:has(.qtag) [data-testid="stMarkdownContainer"] p { margin: 0; }
+    .stColumn:has(.qtag) [data-testid="stVerticalBlock"] { gap: 0.35rem; }
+    .qtag {
+        display: inline-block;
+        padding: 0.14rem 0.5rem;
+        border-radius: 6px;
+        background: var(--light-blue);
+        color: var(--navy);
+        font-size: 0.62rem;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .stColumn:has(.qtag) .stButton > button {
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        padding: 0.3rem 0 0 0 !important;
+        color: var(--ink) !important;
+        text-align: left !important;
+        font-size: 0.88rem !important;
+        font-weight: 600 !important;
+        line-height: 1.4 !important;
+        min-height: 0 !important;
+        height: auto !important;
+        white-space: normal !important;
+    }
+    .stColumn:has(.qtag) .stButton > button:hover {
+        color: var(--navy) !important;
+    }
+    .stColumn:has(.qtag) .stButton > button:focus-visible {
+        outline: 2px solid var(--navy);
         outline-offset: 2px;
     }
-    .stButton > button p {
+    .stColumn:has(.qtag) .stButton > button p {
         white-space: normal;
         overflow: visible;
         text-overflow: clip;
-        font-weight: 500;
-        font-size: 0.92rem;
-        line-height: 1.45;
-        /* Long scheme names must wrap rather than force the page wider than the
-           viewport, which is what causes horizontal scroll on a phone. */
         overflow-wrap: anywhere;
     }
 
@@ -216,19 +376,18 @@ st.markdown(
         padding: 0.4rem 0.7rem;
     }
     .stUserMessage {
-        background: var(--hdfc-navy);
+        background: var(--navy);
         border: none;
     }
-    .stUserMessage p { color: #FFFFFF; font-weight: 500; }
+    .stUserMessage p { color: #ffffff; font-weight: 500; }
 
     /* Answer card ---------------------------------------------------------
        st.container(border=True) renders as a bordered wrapper; these rules give
-       it the rounded, padded card the redesign wants and lift it off the
-       sunken sidebar/background. */
+       it the rounded, padded card the design wants and lift it off the canvas. */
     [data-testid="stVerticalBlockBorderWrapper"] {
         border-radius: 14px;
         background: var(--surface);
-        box-shadow: 0 1px 3px rgba(15, 61, 86, 0.07);
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07);
         padding: 0.35rem 0.4rem;
     }
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stAlert"]) {
@@ -250,13 +409,13 @@ st.markdown(
         margin-top: 0.35rem;
         padding: 0.32rem 0.8rem;
         border-radius: 8px;
-        background: var(--hdfc-navy);
-        color: #FFFFFF !important;
+        background: var(--navy);
+        color: #ffffff !important;
         text-decoration: none;
         font-size: 0.82rem;
         font-weight: 600;
     }
-    .srclink:hover { background: var(--hdfc-navy-soft); }
+    .srclink:hover { background: var(--navy-dark); }
 
     /* Evidence expander ----------------------------------------------------
        The passages stay one click away, but the retrieval score is the least
@@ -270,58 +429,74 @@ st.markdown(
         padding: 0 !important;
     }
 
+    /* Chat input ---------------------------------------------------------- */
+    [data-testid="stChatInput"] {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--surface);
+        box-shadow: 0 6px 20px rgba(15, 23, 42, 0.09);
+        overflow: hidden;
+    }
+    [data-testid="stChatInput"] textarea { background: transparent; }
+    [data-testid="stChatInputSubmitButton"] {
+        background: var(--navy) !important;
+        color: #ffffff !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="stChatInputSubmitButton"]:hover { background: var(--navy-dark) !important; }
+
     /* Sidebar ------------------------------------------------------------- */
-    [data-testid="stSidebar"] { background: var(--surface-sunken); }
+    [data-testid="stSidebar"] {
+        background: var(--surface);
+        border-right: 1px solid var(--line);
+    }
     [data-testid="stSidebar"] .block-container { padding-top: 1.2rem; }
     .sbbrand {
-        color: var(--hdfc-navy);
+        color: var(--navy);
         font-size: 1.15rem;
-        font-weight: 700;
+        font-weight: 800;
         letter-spacing: -0.01em;
     }
     .sbsub { color: var(--ink-muted); font-size: 0.8rem; margin-bottom: 0.4rem; }
     .sbsection {
         color: var(--ink-faint);
         font-size: 0.7rem;
-        font-weight: 700;
+        font-weight: 800;
         letter-spacing: 0.12em;
         text-transform: uppercase;
         margin: 1.4rem 0 0.3rem 0;
     }
-    [data-testid="stSidebar"] a { text-decoration: none; }
-    [data-testid="stSidebar"] p { font-size: 0.88rem; }
-
-    /* Cold start ---------------------------------------------------------- */
-    .coldnote {
-        border: 1px solid var(--line);
-        border-left: 3px solid var(--hdfc-navy);
-        border-radius: 10px;
-        background: var(--surface);
-        padding: 0.7rem 0.95rem;
-        color: var(--ink-muted);
-        font-size: 0.88rem;
-        margin-bottom: 0.5rem;
+    [data-testid="stSidebar"] a {
+        display: block;
+        padding: 0.4rem 0.55rem;
+        border-radius: 9px;
+        color: var(--navy) !important;
+        text-decoration: none;
+        font-size: 0.86rem;
+        font-weight: 600;
+        transition: background 0.12s ease, color 0.12s ease;
     }
-    .coldnote b { color: var(--hdfc-navy); }
+    [data-testid="stSidebar"] a:hover {
+        background: var(--light-blue);
+        color: var(--accent) !important;
+    }
+    [data-testid="stSidebar"] p { font-size: 0.86rem; }
 
     /* Mobile -------------------------------------------------------------- */
     @media (max-width: 640px) {
         .block-container {
             padding-left: 1rem;
             padding-right: 1rem;
-            padding-top: 1.4rem;
+            padding-top: 1rem;
         }
-        h1 { font-size: 1.7rem; }
-        .brandsub { font-size: 0.88rem; }
-        .statuswrap { text-align: left; padding-top: 0.2rem; }
+        .appheader { flex-wrap: wrap; }
+        .brandname { font-size: 1rem; }
+        .herologo { width: 64px; height: 64px; }
+        .herotitle { font-size: 1.6rem; }
+        .stColumn:has(.qtag) { padding: 0.8rem; }
         .block-container p, .block-container li {
             font-size: 0.95rem;
             line-height: 1.55;
-        }
-        /* Buttons are the primary tap target on a phone. */
-        .stButton > button {
-            padding-top: 0.85rem;
-            padding-bottom: 0.85rem;
         }
         /* The chat input is pinned to the bottom; at the default size its
            placeholder truncates to a few characters on a narrow screen. */
@@ -475,37 +650,99 @@ def _kb_status() -> str:
     return KB_STATUS_READY if warm_index() else "Index empty"
 
 
+@st.cache_data(show_spinner=False)
+def _logo_data_uri() -> str:
+    """The local logo as a downscaled inline data URI.
+
+    Streamlit cannot serve a repo-relative image from inside an HTML block, and
+    the source PNG is ~400 KB, so the image is thumbnailed before it is base64
+    encoded. A missing asset returns an empty string and the caller falls back
+    to a text mark rather than taking the page down.
+    """
+    if not LOGO_PATH.exists():
+        return ""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        image = Image.open(LOGO_PATH).convert("RGBA")
+        image.thumbnail((160, 160))
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+    except Exception:  # noqa: BLE001 - the logo must never break the page
+        return ""
+
+
 def header() -> None:
-    """Wordmark, subtitle, and live RAG connection status."""
-    st.title(APP_TITLE)
-    left, right = st.columns([3, 1], vertical_alignment="bottom")
-    with left:
-        st.markdown(f'<div class="brandsub">{escape(BRAND_SUBTITLE)}</div>', unsafe_allow_html=True)
-    with right:
-        st.markdown(
-            f'<div class="statuswrap"><span class="statuspill"><span class="dot"></span>'
-            f"{escape(_kb_status())}</span></div>",
-            unsafe_allow_html=True,
-        )
+    """MoneyChat wordmark and subtitle, with the live RAG status on the right."""
+    logo = _logo_data_uri()
+    if logo:
+        logo_html = f'<img class="brandlogo" src="{logo}" alt="MoneyChat logo">'
+    else:
+        logo_html = '<div class="brandlogo logofallback">M</div>'
+    st.markdown(
+        f'<div class="appheader">'
+        f'<div class="appheader-brand">{logo_html}'
+        f'<div><div class="brandname">{escape(APP_TITLE)}</div>'
+        f'<div class="brandsub">{escape(BRAND_SUBTITLE)}</div></div></div>'
+        f'<span class="statuspill"><span class="dot"></span>'
+        f"{escape(_kb_status())}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def hero() -> None:
-    """One card that introduces the assistant."""
-    with st.container(border=True):
-        st.markdown(f'<div class="herokicker">{escape(HERO_KICKER)}</div>', unsafe_allow_html=True)
-        st.markdown(WELCOME)
+    """Centered brand lockup that introduces the assistant."""
+    logo = _logo_data_uri()
+    logo_html = f'<img class="herologo" src="{logo}" alt="MoneyChat logo">' if logo else ""
+    st.markdown(
+        f'<div class="hero">{logo_html}'
+        f'<div class="herotitle">{escape(APP_TITLE)}</div>'
+        f'<div class="herosub">{escape(BRAND_SUBTITLE)}</div>'
+        f'<div class="herointro">{escape(WELCOME)}</div>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def fact_banner() -> None:
+    """The red-bordered FACTS, NOT FORECASTS compliance banner."""
+    st.markdown(
+        f'<div class="factbanner">'
+        f'<div class="facticon">!</div>'
+        f"<div>"
+        f'<div class="facttitle">{escape(HERO_KICKER)}</div>'
+        f'<p class="facttext">{escape(BANNER_TEXT)}</p>'
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def question_cards() -> None:
-    """The three starting questions, restyled as cards by the CSS block."""
-    st.markdown('<div class="sectionlabel">Try asking</div>', unsafe_allow_html=True)
-    for column, example in zip(st.columns(len(EXAMPLE_QUESTIONS)), EXAMPLE_QUESTIONS):
-        # width="stretch" replaces use_container_width, deprecated in Streamlit 1.49+.
-        # The label is a full question, so the button must wrap rather than
-        # ellipsise - the CSS above does that. Columns also collapse to a
-        # single column on narrow viewports, which is the mobile case.
-        if column.button(example, key=f"example-{example[:24]}", width="stretch"):
-            respond(example)
+    """The starting questions, each a card with a small category tag.
+
+    Real st.button elements, not HTML. A button is the click target Streamlit
+    already wires up for us, including keyboard activation and the widget state
+    that survives a rerun; hand-rolling a div would mean reimplementing that and
+    getting the accessibility behaviour wrong. The category tag sits above the
+    button inside the column, and the CSS cards the column around both.
+    """
+    st.markdown('<div class="sectionlabel">Suggested questions</div>', unsafe_allow_html=True)
+    columns = st.columns(len(EXAMPLE_QUESTIONS), gap="small")
+    for index, (column, example) in enumerate(zip(columns, EXAMPLE_QUESTIONS)):
+        tag = EXAMPLE_CATEGORIES[index] if index < len(EXAMPLE_CATEGORIES) else "Fact"
+        with column:
+            st.markdown(f'<span class="qtag">{escape(tag)}</span>', unsafe_allow_html=True)
+            # width="stretch" replaces use_container_width, deprecated in
+            # Streamlit 1.49+. The label is a full question, so the button must
+            # wrap rather than ellipsise - the CSS above does that. Columns
+            # collapse to one on narrow viewports, which is the mobile case.
+            if st.button(example, key=f"example-{example[:24]}", width="stretch"):
+                respond(example)
 
 
 def sidebar() -> None:
@@ -515,24 +752,12 @@ def sidebar() -> None:
             f'<div class="sbsub">{escape(BRAND_SUBTITLE)}</div>',
             unsafe_allow_html=True,
         )
-        st.markdown(f'<div class="sbsection">Schemes</div>', unsafe_allow_html=True)
-        # One entry per scheme: the name is the link, the category is a quiet
-        # second line. Two rows per scheme, with an unlabelled category link,
-        # read as ten items for five schemes.
+        st.markdown('<div class="sbsection">Supported schemes</div>', unsafe_allow_html=True)
+        # Names only: the five allowlisted schemes, no counts or category tags.
         for source in SOURCES:
             st.markdown(f"[{source.scheme_name}]({source.url})")
-            st.caption(source.category)
 
-        st.markdown(f'<div class="sbsection">Knowledge base</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<span class="statuspill"><span class="dot"></span>'
-            f"{escape(_kb_status())}</span>",
-            unsafe_allow_html=True,
-        )
-        st.write(f"{warm_index()} chunks embedded")
-        st.caption(f"{EMBED_MODEL} &middot; {EMBED_DIMS} &middot; {VECTOR_STORE}")
-
-        st.markdown(f'<div class="sbsection">Disclaimer</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sbsection">Disclaimer</div>', unsafe_allow_html=True)
         st.caption(DISCLAIMER)
 
 
@@ -666,6 +891,7 @@ def respond(question: str) -> None:
 sidebar()
 header()
 hero()
+fact_banner()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
