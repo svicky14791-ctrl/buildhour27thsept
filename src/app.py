@@ -156,20 +156,6 @@ st.markdown(
         text-transform: uppercase;
         margin-bottom: 0.35rem;
     }
-    .chips { margin-top: 0.9rem; }
-    .chip {
-        display: inline-block;
-        margin: 0.2rem 0.4rem 0.2rem 0;
-        padding: 0.28rem 0.7rem;
-        border-radius: 8px;
-        background: var(--surface-sunken);
-        border: 1px solid var(--line);
-        color: var(--ink);
-        font-size: 0.78rem;
-        font-weight: 600;
-    }
-    .chip .chipk { color: var(--ink-muted); font-weight: 500; }
-
     /* Section labels ------------------------------------------------------ */
     .sectionlabel {
         color: var(--ink-muted);
@@ -479,10 +465,6 @@ def ask_cached(question: str):
 # --- presentation helpers ----------------------------------------------------
 
 
-def _chip(key: str, value: str) -> str:
-    return f'<span class="chip"><span class="chipk">{escape(key)}</span> {escape(value)}</span>'
-
-
 def _kb_status() -> str:
     """Label for the header and sidebar pills.
 
@@ -508,19 +490,10 @@ def header() -> None:
 
 
 def hero() -> None:
-    """One card that says what this is and how big the corpus is."""
+    """One card that introduces the assistant."""
     with st.container(border=True):
         st.markdown(f'<div class="herokicker">{escape(HERO_KICKER)}</div>', unsafe_allow_html=True)
         st.markdown(WELCOME)
-        st.markdown(
-            '<div class="chips">'
-            + _chip("Schemes", str(len(SOURCES)))
-            + _chip("Passages", str(warm_index()))
-            + _chip("Store", VECTOR_STORE)
-            + _chip("Embeddings", EMBED_MODEL)
-            + "</div>",
-            unsafe_allow_html=True,
-        )
 
 
 def question_cards() -> None:
