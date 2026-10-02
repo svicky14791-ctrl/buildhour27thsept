@@ -64,6 +64,9 @@ BANNER_TEXT = (
     "Answers are grounded strictly in the ingested HDFC Mutual Fund scheme "
     "pages. No forecasts, no rankings and no investment advice."
 )
+# Header for the demonstrated-query section shown above a grounded multi-scheme
+# answer. The badge beside it carries real provenance, never a hardcoded month.
+DEMO_QUERY_TITLE = "DEMONSTRATED GROUNDED QUERY"
 
 WELCOME = (
     "Explore scheme details, fund information and key facts through a simple "
@@ -316,6 +319,69 @@ st.markdown(
         letter-spacing: 0.12em;
         text-transform: uppercase;
         margin: 0.2rem 0 0.6rem 0;
+    }
+
+    /* Demonstrated grounded query ----------------------------------------
+       Sits at the top of a grounded, multi-scheme answer: a green status dot,
+       the section label, the real provenance date, and the question that
+       produced the answer. It is rendered only on the non-refusal branch, so
+       it can never dress up a refusal as a demonstration. */
+    .demoquery { margin: 0 0 0.7rem 0; }
+    .demohead {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 0.55rem;
+    }
+    .demodot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--ok);
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+        flex: 0 0 auto;
+    }
+    .demotitle {
+        color: var(--ink);
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+    }
+    .demobadge {
+        display: inline-block;
+        padding: 0.14rem 0.5rem;
+        border-radius: 6px;
+        background: var(--light-blue);
+        color: var(--navy);
+        font-size: 0.62rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+    }
+    .demoq {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.6rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 0.7rem 0.85rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    }
+    .demoqmark {
+        flex: 0 0 auto;
+        color: var(--navy);
+        font-weight: 800;
+        font-size: 0.95rem;
+        line-height: 1.5;
+    }
+    .demoqtext {
+        color: var(--ink);
+        font-size: 0.9rem;
+        font-weight: 600;
+        line-height: 1.5;
     }
 
     /* Suggested-question cards -------------------------------------------
@@ -744,6 +810,32 @@ def fact_banner() -> None:
     )
 
 
+def _sync_badge(message: dict) -> str:
+    """The demo badge: real provenance date, or a bare label when absent."""
+    date = (message.get("last_updated") or "").strip()
+    return f"Verified Sync \u00b7 {date}" if date else "Verified Sync"
+
+
+def demonstrated_query(question: str, message: dict) -> None:
+    """Render the demonstrated grounded query above a grounded answer.
+
+    Called only from render_assistant's non-refusal branch, when the answer was
+    grounded in two or more scheme pages. Explicit "vs"/"compare" questions are
+    refused by src/guardrails.py before they reach the answer path, so this never
+    manufactures a comparison - it only labels a query the chain really grounded.
+    """
+    st.markdown(
+        f'<div class="demoquery">'
+        f'<div class="demohead"><span class="demodot"></span>'
+        f'<span class="demotitle">{escape(DEMO_QUERY_TITLE)}</span>'
+        f'<span class="demobadge">{escape(_sync_badge(message))}</span></div>'
+        f'<div class="demoq"><span class="demoqmark">Q</span>'
+        f'<span class="demoqtext">{escape(question)}</span></div>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def question_cards() -> None:
     """The starting questions, each a card with a small category tag.
 
@@ -813,7 +905,7 @@ def _source_card(message: dict, schemes: list[str], label: str) -> None:
         )
 
 
-def render_assistant(message: dict) -> None:
+def render_assistant(message: dict, question: str = "") -> None:
     answer = message.get("answer") or ""
     body, _footer = split_answer_footer(answer)
     body = body.strip()
@@ -838,6 +930,12 @@ def render_assistant(message: dict) -> None:
                 f"[{schemes[0] if retrieved else 'the 5 HDFC schemes'}]({message['source_url']})"
             )
     else:
+        # A grounded answer that spans two or more scheme pages is the live
+        # equivalent of the design's comparison example. Refusals never reach
+        # here, and an explicit "vs"/"compare" question is refused upstream, so
+        # this only ever labels a query the chain actually grounded.
+        if question and len(schemes) >= 2:
+            demonstrated_query(question, message)
         with st.container(border=True):
             st.markdown(body)
         if schemes:
@@ -920,12 +1018,17 @@ if "messages" not in st.session_state:
 
 if st.session_state.messages:
     st.markdown('<div class="sectionlabel">Conversation</div>', unsafe_allow_html=True)
+    # Track the user turn as we walk the transcript so each assistant answer can
+    # show the question that produced it. The transcript alternates user/assistant,
+    # so the last user message is the one this answer belongs to.
+    question = ""
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             if message["role"] == "user":
+                question = message["content"]
                 st.markdown(message["content"])
             else:
-                render_assistant(message)
+                render_assistant(message, question)
 else:
     question_cards()
 

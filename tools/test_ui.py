@@ -172,6 +172,11 @@ check("assistant role", at.chat_message[-1].name, "assistant")
 body = text_of(at.chat_message[-1])
 check_that("answer is not a refusal", "I only answer factual questions" not in body, body[:120])
 check_that(
+    "no demo section on a single-scheme answer",
+    "DEMONSTRATED GROUNDED QUERY" not in body,
+    body[:200],
+)
+check_that(
     "expense ratio answered from corpus", "1.03%" in body or "expense ratio" in body.lower(),
     body[:160],
 )
@@ -206,6 +211,11 @@ last = at.chat_message[-1]
 body = text_of(last)
 check("rendered as st.warning", len(last.warning), 1)
 check("no info block", len(last.info), 0)
+check_that(
+    "no demo section on a refusal",
+    "DEMONSTRATED GROUNDED QUERY" not in body,
+    body[:200],
+)
 check_that(
     "polite refusal copy", "can't recommend a scheme" in body, body[:160]
 )
@@ -309,6 +319,31 @@ no_exceptions(at, "pii")
 body = text_of(at.chat_message[-1])
 check_that("PAN not echoed back", "ABCDE1234F" not in body, body[:200])
 check_that("PII refusal copy", "personal or financial account information" in body, body[:200])
+
+# --- 11. demonstrated grounded query: multi-scheme grounded answer ----------
+# A question that names no scheme is answered from several scheme pages at once.
+# That is the live, guardrail-safe stand-in for the design's comparison example,
+# so the demonstrated-query section renders and carries real provenance.
+at = run()
+at.chat_input[0].set_value("What is the minimum SIP?").run()
+no_exceptions(at, "demonstrated grounded query")
+last = at.chat_message[-1]
+body = text_of(last)
+check_that(
+    "demo section shown on a multi-scheme grounded answer",
+    "DEMONSTRATED GROUNDED QUERY" in body,
+    body[:200],
+)
+check_that(
+    "demo badge shows real provenance, not a hardcoded month",
+    "Verified Sync" in body and "Oct 2024" not in body,
+    body[:200],
+)
+check_that(
+    "demo question card echoes the question",
+    "What is the minimum SIP?" in body,
+    body[:200],
+)
 
 # --- report -----------------------------------------------------------------
 width = max(len(label) for label, _ok, _detail in _cases) + 2
