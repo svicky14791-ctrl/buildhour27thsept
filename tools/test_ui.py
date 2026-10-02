@@ -93,7 +93,11 @@ def scheme_links(block) -> set[str]:
 # --- 1. initial render -------------------------------------------------------
 at = run()
 no_exceptions(at, "initial render")
-check("title", [t.value for t in at.title], ["HDFC BOT"])
+check_that(
+    "MoneyChat brand in header",
+    any("MoneyChat" in m.value for m in at.markdown),
+    "",
+)
 check("3 example buttons", len(at.button), 3)
 check_that(
     "chat input present", len(at.chat_input) == 1, f"got {len(at.chat_input)}"
@@ -104,15 +108,13 @@ check_that(
 )
 check_that("sidebar lists 5 schemes", len(scheme_links(at.sidebar)) == len(SOURCES), "")
 check_that(
-    "index size rendered",
-    any("chunks embedded" in c.value for c in at.sidebar.caption)
-    or any("chunks embedded" in m.value for m in at.sidebar.markdown),
+    "RAG status badge rendered",
+    any("RAG connected" in m.value for m in at.markdown),
     "",
 )
 check_that(
-    "welcome mentions the refusal boundary", "never give advice" in " ".join(
-        w.value for w in at.info
-    ) or "never give advice" in " ".join(p.value for p in at.markdown),
+    "compliance banner rendered",
+    any("FACTS, NOT FORECASTS" in m.value.upper() for m in at.markdown),
     "",
 )
 # Done gate: the standing note is pinned verbatim by the Phase 7 spec. It renders
@@ -142,9 +144,10 @@ check_that(
     "",
 )
 check_that(
-    "category shown under each scheme",
-    all(
-        source.category in "\n".join(c.value for c in at.sidebar.caption)
+    "no category captions left in the sidebar",
+    not any(
+        source.category in c.value
+        for c in at.sidebar.caption
         for source in SOURCES
     ),
     "",
